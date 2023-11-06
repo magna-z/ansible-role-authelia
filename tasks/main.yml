@@ -1,0 +1,118 @@
+---
+- name: check mandatory variables
+  ansible.builtin.assert:
+    that:
+      - authelia_main_config is defined
+    quiet: true
+
+- name: ensure config directory
+  ansible.builtin.file:
+    state: directory
+    path: /etc/authelia
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: ensure main config
+  notify: restart service authelia
+  ansible.builtin.copy:
+    dest: /etc/authelia/config.yml
+    content: "{{ authelia_main_config }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: ensure extra configs
+  block:
+    - name: find current configs
+      ansible.builtin.find:
+        paths: /etc/authelia
+        excludes: [config.yml]
+      register: _authelia_config_d
+
+    - name: remove current configs
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ _authelia_config_d.files }}"
+
+    - name: ensure extra config files
+      ansible.builtin.copy:
+        dest: "/etc/authelia/{{ item.filename }}"
+        content: "{{ item.content }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ authelia_extra_config_files }}"
+
+- name: ensure systemd authelia.service
+  notify: restart service authelia
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/authelia.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Requires=docker.service
+      After=docker.service
+      StartLimitIntervalSec=0
+      [Service]
+      ExecStartPre=-/usr/bin/docker rm --force %N
+      ExecStart=/usr/bin/docker run \
+        --name=%N \
+        --rm=true \
+        --pid=host \
+        --log-driver=none \
+        --stop-timeout=30 \
+        --no-healthcheck \
+        --user={{ nobody_uid }}:{{ nogroup_gid }} \
+        --network={{ authelia_docker_network }} \
+      {% if authelia_docker_network != 'host' %}{% for publish in authelia_docker_publish_ports %}
+        --publish={{ publish }} \
+      {% endfor %}{% endif %}
+      {% if authelia_docker_envs | length > 0 %}{% for key, value in authelia_docker_envs.items() %}
+        --env={{ key }}="{{ value }}" \
+      {% endfor %}{% endif %}
+      {% if authelia_docker_labels | length > 0 %}{% for key, value in authelia_docker_labels.items() %}
+        --label={{ key }}="{{ value }}" \
+      {% endfor %}{% endif %}
+        --volume=/etc/localtime:/etc/localtime:ro \
+        --volume=/etc/timezone:/etc/timezone:ro \
+        --volume=/etc/authelia:/etc/authelia:ro \
+        --volume=/etc/ssl/certs:/etc/ssl/certs:ro \
+        --volume=/usr/local/share/ca-certificates:/usr/local/share/ca-certificates:ro \
+        --workdir=/var/lib/authelia \
+        --entrypoint=authelia \
+        {{ authelia_docker_image }} --config /etc/authelia/config.yml
+      ExecStop=/usr/bin/docker stop %N
+      Restart=always
+      RestartSec=10
+      KillMode=process
+      [Install]
+      WantedBy=multi-user.target
+
+- name: execute handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: start service authelia
+  ansible.builtin.systemd:
+    name: authelia
+    daemon_reload: true
+    enabled: true
+    state: started
+
+- name: wait authelia
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 9091
+    timeout: 60
+  retries: 5
+
+- name: healthcheck authelia
+  ansible.builtin.uri:
+    url: http://127.0.0.1:9091/api/health
+  register: _authelia_health
+  until: _authelia_health.status == 200
+  delay: 10
+  retries: 5

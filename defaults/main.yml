@@ -1,0 +1,10 @@
+---
+authelia_docker_image: authelia/authelia:latest
+
+authelia_docker_network: bridge
+authelia_docker_publish_ports: ["127.0.0.1:9091:9091", "127.0.0.1:9092:9092"]
+
+authelia_docker_envs: []
+authelia_docker_labels: []
+
+authelia_extra_config_files: []

@@ -1,0 +1,9 @@
+---
+dependencies: []
+galaxy_info:
+  description: Configure and run unprivileged Authelia server as docker container into systemd.service.
+  author: Maxim Zalysin
+  license: MIT
+  platforms:
+    - name: GenericLinux
+      version: [any]
